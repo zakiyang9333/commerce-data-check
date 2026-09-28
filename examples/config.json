@@ -1,0 +1,7 @@
+{
+  "date_column": "date",
+  "required_columns": ["date", "product_id", "sales", "ad_spend"],
+  "key_columns": ["date", "product_id"],
+  "numeric_columns": {"sales": {"min": 0}, "ad_spend": {"min": 0}},
+  "allow_empty": false
+}
