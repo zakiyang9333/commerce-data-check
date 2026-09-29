@@ -32,11 +32,22 @@ python3 -m unittest discover -s tests -v
 
 JSON 输出只包含状态、目标日期、行数、问题类型、数据记录序号和字段名，不输出单元格内容。记录序号从 1 开始，不计表头和空白记录，不是原文件物理行号。字段名仍可能包含业务信息，分享报告前应检查。
 
-Exit codes: `0` healthy/valid_empty; `1` failed; `2` waiting; `3` unreadable input or invalid configuration. 输入文件和配置只读；工具不连接网络、不启动浏览器、不修改数据库。
+Exit codes: `0` healthy/valid_empty; `1` failed; `2` waiting; `3` unreadable input or invalid configuration. `check_data.py` 的输入文件和配置只读；它不连接网络、不启动浏览器、不修改数据库。
 
 ## Current limits / 当前边界
 
-只支持 UTF-8 CSV，含 BOM 的 CSV 也可用；不支持 Excel、数据库核对、跨日覆盖检查、自动采集、自动回补或 Web 界面。整文件读入内存，暂不适合超大文件。配置由本地维护者提供，当前没有完整的配置结构校验器。
+`check_data.py` 只支持 UTF-8 CSV，含 BOM 的 CSV 也可用；不支持 Excel、数据库核对、跨日覆盖检查、自动采集、自动回补或 Web 界面。整文件读入内存，暂不适合超大文件。配置由本地维护者提供，当前没有完整的配置结构校验器。
+
+## Realtime layer / 近实时层（Phase 0）
+
+`realtime/` 是独立的新包（同样只用标准库），实现近实时事实、确定性信号和事件驱动模型推理的 Phase 0 基础设施：独立的 SQLite + WAL 实时库、专用采集浏览器、5/30 分钟采集调度、latest-good 语义、shadow 信号引擎、带缓存/熔断/token 预算的推理队列，以及与模型解耦的刷新链。与 `check_data.py` 不同，它会写入自己的数据库，并可启动一个专用浏览器；它拒绝写入已结算（settled）数据库。
+
+```sh
+python3 -m realtime simulate --days 3          # 合成演练，输出标记为 SIMULATED
+python3 -m realtime init --config examples/realtime_config.json
+```
+
+接入步骤、保证与指标定义见 [docs/realtime_phase0.md](docs/realtime_phase0.md)。站点适配器（adapter）和模型客户端由使用方提供；仓库不含任何平台账号、页面抓取逻辑或模型密钥。
 
 ## Contributing
 
