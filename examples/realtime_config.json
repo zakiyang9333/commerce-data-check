@@ -1,0 +1,95 @@
+{
+  "timezone_offset_hours": 8,
+  "settled_store_paths": ["data/settled_facts.db"],
+  "schedule": {
+    "windows": [
+      {"start": "00:00", "end": "08:00", "interval_minutes": 30},
+      {"start": "08:00", "end": "24:00", "interval_minutes": 5}
+    ]
+  },
+  "browser": {
+    "port_range": [9340, 9399],
+    "reserved_ports": [9222, 9330],
+    "chrome_path": null,
+    "headless": false,
+    "login_url_markers": ["passport.jd.com", "/login"]
+  },
+  "sources": {
+    "jd_shangzhi_realtime": {
+      "enabled": true,
+      "uses_dedicated_browser": true,
+      "adapter": "your_dashboard.realtime_adapters:shangzhi_realtime",
+      "metrics": [
+        {"metric": "gmv", "entity_type": "store", "unit": "CNY", "required": true,
+         "definition": "商智实时·成交金额·当日累计（未结算）"},
+        {"metric": "orders", "entity_type": "store", "unit": "count", "required": true,
+         "definition": "商智实时·成交单量·当日累计（未结算）"},
+        {"metric": "visitors", "entity_type": "store", "unit": "count", "required": true,
+         "definition": "商智实时·访客数·当日去重（实时口径，不等同T+1访客口径）"}
+      ]
+    },
+    "jd_jingzhuntong_intraday": {
+      "enabled": true,
+      "uses_dedicated_browser": true,
+      "adapter": "your_dashboard.realtime_adapters:jingzhuntong_intraday",
+      "metrics": [
+        {"metric": "ad_spend", "entity_type": "account", "unit": "CNY", "required": true,
+         "definition": "京准通·账户花费·当日累计（日内，未结算）"},
+        {"metric": "ad_gmv", "entity_type": "account", "unit": "CNY", "required": true,
+         "definition": "京准通·账户成交金额·当日累计（归因有延迟）"},
+        {"metric": "ad_orders", "entity_type": "account", "unit": "count",
+         "definition": "京准通·账户成交单量·当日累计（归因有延迟）"},
+        {"metric": "ad_clicks", "entity_type": "account", "unit": "count",
+         "definition": "京准通·账户点击·当日累计"},
+        {"metric": "ad_spend", "entity_type": "campaign", "unit": "CNY",
+         "definition": "京准通·计划花费·当日累计"},
+        {"metric": "ad_gmv", "entity_type": "campaign", "unit": "CNY",
+         "definition": "京准通·计划成交金额·当日累计（归因有延迟）"}
+      ]
+    },
+    "jd_warehouse_intraday": {
+      "enabled": false,
+      "uses_dedicated_browser": false,
+      "note": "Enable only after the existing warehouse interface is proven stable.",
+      "metrics": [
+        {"metric": "warehouse_orders", "entity_type": "warehouse", "unit": "count", "required": true,
+         "definition": "京仓·出库订单·当日累计"},
+        {"metric": "warehouse_stock", "entity_type": "warehouse", "unit": "units", "required": true, "cumulative": false,
+         "definition": "京仓·可用库存·时点值"}
+      ]
+    }
+  },
+  "signals": {
+    "max_lag_minutes": 20,
+    "min_completeness": 0.5,
+    "rules": [
+      {"rule": "GMV_DROP", "series": {"source": "jd_shangzhi_realtime", "metric": "gmv", "entity": "store"}},
+      {"rule": "ORDER_DROP", "series": {"source": "jd_shangzhi_realtime", "metric": "orders", "entity": "store"}},
+      {"rule": "SPEND_SPIKE", "series": {"source": "jd_jingzhuntong_intraday", "metric": "ad_spend", "entity": "account"}},
+      {"rule": "ROI_COLLAPSE",
+       "numerator": {"source": "jd_jingzhuntong_intraday", "metric": "ad_gmv", "entity": "account"},
+       "denominator": {"source": "jd_jingzhuntong_intraday", "metric": "ad_spend", "entity": "account"}},
+      {"rule": "CAMPAIGN_SPEND_ANOMALY",
+       "series": {"source": "jd_jingzhuntong_intraday", "metric": "ad_spend", "entity_type": "campaign"}}
+    ]
+  },
+  "inference": {
+    "daily_token_budget": 300000,
+    "lanes": {
+      "production": {
+        "role": "PRODUCTION",
+        "model": "mimo-v2.5-pro",
+        "serve_to_ui": true,
+        "features": ["settled_daily_batch", "on_demand_why"]
+      },
+      "MIMO26_REALTIME_SHADOW_V1": {
+        "role": "CHALLENGER",
+        "model": null,
+        "production_validation": false,
+        "build_fingerprint": "",
+        "serve_to_ui": false,
+        "features": ["signal_explanation", "settled_daily_batch"]
+      }
+    }
+  }
+}
