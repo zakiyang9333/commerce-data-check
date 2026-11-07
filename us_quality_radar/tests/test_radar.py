@@ -68,6 +68,19 @@ class TestROCE(unittest.TestCase):
         self.assertEqual(self.r["stability_grade"], "A")
         self.assertEqual(self.r["trend"], "上升")
 
+    def test_adjusted_same_periods(self):
+        c = testco()
+        c["facts"]["us-gaap"]["RestructuringCharges"] = {"units": {"USD": [
+            fact(40, "2025-12-31", "2025-01-01"), fact(10, "2025-09-30", "2025-01-01", form="10-Q"),
+            fact(20, "2026-09-30", "2026-01-01", form="10-Q")]}}
+        c["facts"]["us-gaap"]["GainLossOnSaleOfPropertyPlantEquipment"] = {"units": {"USD": [
+            fact(30, "2026-09-30", "2026-01-01", form="10-Q")]}}
+        r = analyse(1, c, date(2026, 11, 7))
+        self.assertAlmostEqual(r["ebit_ttm_adj"], 450 + (20 + 40 - 10) - 30)
+        self.assertAlmostEqual(r["roce_ttm"], 450 / 1250)  # reported kept unchanged
+        fy25 = [h for h in r["annual"] if h["label"] == "FY2025"][0]
+        self.assertAlmostEqual(fy25["ebit_adj"], 440)
+
     def test_sources_traceable(self):
         s = self.r["sources"]
         self.assertTrue(all(x["url"].startswith("https://www.sec.gov/Archives/edgar/data/1/") for x in s))

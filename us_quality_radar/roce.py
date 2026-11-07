@@ -35,14 +35,15 @@ def _prior_fy(series: Series, start: str) -> Optional[Fact]:
 
 def derived_quarters(series: Series) -> List[Tuple[str, str, float, list]]:
     """Discrete quarters: tagged 3-month facts plus Q4 = FY - 9M."""
-    out = {(f.start, f.end): (f.start, f.end, f.val, [f]) for f in series.durations("Q")}
+    out = {(f.start, f.end): (f.start, f.end, f.val, [f], [(1, f.start, f.end)]) for f in series.durations("Q")}
     for fy in series.durations("FY"):
         nine = series.duration_near("9M", d(fy.end) - timedelta(days=91), start=d(fy.start), tol_days=10)
         if nine and nine.start == fy.start:
             q4s = (d(nine.end) + timedelta(days=1)).isoformat()
             key = (q4s, fy.end)
             if key not in out:
-                out[key] = (q4s, fy.end, fy.val - nine.val, [fy, nine])
+                out[key] = (q4s, fy.end, fy.val - nine.val, [fy, nine],
+                            [(1, fy.start, fy.end), (-1, nine.start, nine.end)])
     return sorted(out.values(), key=lambda t: t[1])
 
 
@@ -50,7 +51,7 @@ def ttm(series: Series, end: str) -> Optional[dict]:
     """Trailing-twelve-month value of a duration series ending at `end`."""
     for f in series.durations("FY"):
         if f.end == end:
-            return {"value": f.val, "method": "FY", "parts": [f]}
+            return {"value": f.val, "method": "FY", "parts": [f], "terms": [(1, f.start, f.end)]}
     E = d(end)
     for kind in ("9M", "H", "Q"):
         for ytd in [f for f in series.durations(kind) if f.end == end]:
@@ -60,7 +61,8 @@ def ttm(series: Series, end: str) -> Optional[dict]:
             prev = series.duration_near(kind, E - YEAR, start=d(fy_prior.start), tol_days=10)
             if prev and prev.end < ytd.start:
                 return {"value": ytd.val + fy_prior.val - prev.val,
-                        "method": f"YTD({kind})+FY-YTDprior", "parts": [ytd, fy_prior, prev]}
+                        "method": f"YTD({kind})+FY-YTDprior", "parts": [ytd, fy_prior, prev],
+                        "terms": [(1, ytd.start, ytd.end), (1, fy_prior.start, fy_prior.end), (-1, prev.start, prev.end)]}
     # last resort: four contiguous discrete quarters
     qs = derived_quarters(series)
     by_end = {q[1]: q for q in qs}
@@ -72,7 +74,8 @@ def ttm(series: Series, end: str) -> Optional[dict]:
         cur = next((q for q in qs if abs((d(q[1]) - want).days) <= 7), None)
     if len(chain) == 4:
         parts = [p for q in chain for p in q[3]]
-        return {"value": sum(q[2] for q in chain), "method": "sum4Q", "parts": parts}
+        return {"value": sum(q[2] for q in chain), "method": "sum4Q", "parts": parts,
+                "terms": [t for q in chain for t in q[4]]}
     return None
 
 
@@ -171,29 +174,59 @@ def _ratio(ebit: Optional[float], cap: dict) -> Tuple[Optional[float], str]:
     return ebit / cap["avg"], "OK"
 
 
-def _adjust(co: Company, getter) -> dict:
-    """One-off items for Adjusted EBIT. getter(series) -> {'value':..} or None.
-    Adjusted = EBIT + impairments + restructuring - positive disposal gains.
-    Gains are removed (lowers ROCE); charges are added back (raises ROCE).
-    Each item is listed so the adjustment can be audited."""
-    items = {}
-    tot = getter(co.s.get("impair_total", Series([])))
-    if tot:
-        items["impairment(AssetImpairmentCharges)"] = tot
+def _one_off_at(co: Company, start: str, end: str) -> Tuple[Dict[str, float], List[Fact]]:
+    """One-off items for one period, combined without double counting:
+    a combined restructuring+impairment tag wins; otherwise a total
+    impairment tag wins over its components; restructuring is added
+    separately. Disposal gains are taken only when positive (removed)."""
+    def g(key):
+        s = co.s.get(key)
+        return s.get(start, end) if s else None
+    items, facts = {}, []
+
+    def put(name, f, sign=1.0):
+        if f is not None and f.val:
+            items[name] = items.get(name, 0.0) + sign * f.val
+            facts.append(f)
+    combo = g("restr_impair_combo")
+    gw = g("impair_gw")
+    if combo is not None:
+        # ASC 350-20-45-2: goodwill impairment is its own income-statement line,
+        # so it is added on top of a combined restructuring/asset-impairment tag.
+        put("restructuring+impairment", combo)
+        put("goodwill_impairment", gw)
     else:
-        for k in ("impair_gw", "impair_intang", "impair_lla"):
-            v = getter(co.s.get(k, Series([])))
-            if v:
-                items[f"impairment({k})"] = v
-    r = getter(co.s.get("restructuring", Series([])))
-    if r:
-        items["restructuring"] = r
-    g = getter(co.s.get("disposal_gain", Series([])))
-    if g and g["value"] > 0:
-        items["disposal_gain(removed)"] = {**g, "value": -g["value"]}
-    delta = sum(v["value"] for v in items.values())
-    return {"delta": delta, "items": {k: v["value"] for k, v in items.items()},
-            "sources": [p for v in items.values() for p in v.get("parts", [])]}
+        intang = g("impair_intang")
+        parts = [gw, intang] if intang is not None else [gw, g("impair_intang_indef"), g("impair_intang_fin")]
+        parts += [g("impair_lla"), g("impair_lla_disp")]
+        parts = [f for f in parts if f is not None]
+        tot = g("impair_total")
+        comp_sum = sum(f.val for f in parts)
+        # total tag and component tags describe the same charges: take the larger, never both
+        if tot is not None and tot.val >= comp_sum:
+            put("impairment", tot)
+        else:
+            for f in parts:
+                put("impairment", f)
+        put("restructuring", g("restructuring"))
+    gain = g("disposal_gain")
+    if gain is not None and gain.val > 0:
+        put("disposal_gain(removed)", gain, -1.0)
+    return items, facts
+
+
+def _adjust(co: Company, terms) -> dict:
+    """Adjusted EBIT = EBIT + impairments + restructuring - disposal gains,
+    measured over exactly the same periods (same signed terms) as the EBIT
+    figure. An item not tagged for a period counts as 0 (recorded)."""
+    total: Dict[str, float] = {}
+    facts: List[Fact] = []
+    for sign, start, end in terms or []:
+        items, fs = _one_off_at(co, start, end)
+        for k, v in items.items():
+            total[k] = total.get(k, 0.0) + sign * v
+        facts += fs
+    return {"delta": sum(total.values()), "items": total, "sources": facts}
 
 
 def analyse(cik: int, cf: dict, asof: date, group: str = "general") -> dict:
@@ -240,7 +273,7 @@ def analyse(cik: int, cf: dict, asof: date, group: str = "general") -> dict:
             res["sources"] += cap[side]["parts"]
 
     # --- Adjusted TTM ROCE (EBIT adjustments only; capital unchanged)
-    adj = _adjust(co, lambda s: ttm(s, end) if s else None)
+    adj = _adjust(co, t["terms"] if t else [])
     res["adj_items_ttm"] = adj["items"]
     res["sources"] += adj["sources"]
     if t:
@@ -282,7 +315,7 @@ def analyse(cik: int, cf: dict, asof: date, group: str = "general") -> dict:
             m = "B" if method == "A" else "A"
         capf = _avg_ce(co, fe, d(fe) - YEAR)
         r, st = _ratio(f.val, capf)
-        a = _adjust(co, lambda s, fe=fe: ({"value": x.val, "parts": [x]} if (x := next((g for g in s.durations("FY") if g.end == fe), None)) else None))
+        a = _adjust(co, [(1, f.start, f.end)])
         ra, _ = _ratio(f.val + a["delta"], capf)
         hist.append({"fy_end": fe, "label": f"FY{d(fe).year}", "ebit": f.val, "ebit_method": m,
                      "ebit_adj": f.val + a["delta"], "adj_items": a["items"],
@@ -359,7 +392,7 @@ def _flags(co: Company, res: dict, cap: dict, t: Optional[dict], adj: dict, end:
         f.append("LEASE_HEAVY")
     ebit = t["value"] if t else None
     if ebit:
-        imp = sum(v for k, v in adj["items"].items() if k.startswith("impairment"))
+        imp = sum(v for k, v in adj["items"].items() if "impairment" in k)
         if imp > C.ONE_OFF_SHARE_OF_EBIT * abs(ebit):
             f.append("BIG_IMPAIRMENT")
         gain = -adj["items"].get("disposal_gain(removed)", 0.0)
