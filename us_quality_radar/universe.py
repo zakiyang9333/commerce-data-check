@@ -121,6 +121,6 @@ def _exclude_reason(rec: dict, e: dict, forms: set, have_sub: bool) -> str:
         return "SPAC 空白支票公司（SIC 6770）"
     if LIQUIDATING.search(rec["name"]):
         return "清算中（名称）"
-    if rec["entity_type"] and rec["entity_type"].lower() not in ("operating", ""):
+    if rec["entity_type"] and rec["entity_type"].lower() == "investment":
         return f"非经营实体（{rec['entity_type']}）"
     return ""

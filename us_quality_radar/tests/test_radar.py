@@ -116,6 +116,37 @@ class TestROCE(unittest.TestCase):
         self.assertIsNone(r["roce_ttm"])
         self.assertTrue(r["status"].startswith("N/A"))
 
+    def test_point_near_zero_capital(self):
+        r = analyse(1, testco(lc_q3=1590), date(2026, 11, 7))  # end CE 10 of assets 1600
+        self.assertEqual(r["status"], "N/M:资本基数接近零")
+
+    def test_12_week_quarter_calendar(self):
+        from us_quality_radar.xbrl import period_kind
+        self.assertEqual(period_kind("2025-12-29", "2026-06-14"), "H")   # 168 days
+        self.assertEqual(period_kind("2025-12-29", "2026-09-06"), "9M")  # 252 days
+        self.assertEqual(period_kind("2026-06-15", "2026-09-06"), "Q")
+
+    def test_ebit_conflict(self):
+        c = testco()
+        c["facts"]["us-gaap"]["IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest"] = {
+            "units": {"USD": [{**f, "val": -f["val"]} for f in c["facts"]["us-gaap"]["OperatingIncomeLoss"]["units"]["USD"]]}}
+        r = analyse(1, c, date(2026, 11, 7))
+        self.assertIn("EBIT_CONFLICT", r["flags"])
+        self.assertTrue(r["rank_eligible"])   # warning only
+        self.assertFalse(r["watchlist"])
+
+    def test_ebit_greater_than_revenue(self):
+        c = testco()
+        c["facts"]["us-gaap"]["Revenues"] = {"units": {"USD": [{**f, "val": 1.0} for f in c["facts"]["us-gaap"]["OperatingIncomeLoss"]["units"]["USD"]]}}
+        r = analyse(1, c, date(2026, 11, 7))
+        self.assertIn("EBIT_GT_REVENUE", r["flags"])
+        self.assertFalse(r["rank_eligible"])
+
+    def test_stale_not_ranked(self):
+        r = analyse(1, testco(), date(2027, 8, 1))
+        self.assertIn("STALE", r["flags"])
+        self.assertFalse(r["rank_eligible"])
+
     def test_sum_of_quarters(self):
         q = [fact(v, e, s, form="10-Q") for v, s, e in [(10, "2025-10-01", "2025-12-31"), (20, "2026-01-01", "2026-03-31"),
                                                      (30, "2026-04-01", "2026-06-30"), (40, "2026-07-01", "2026-09-30")]]

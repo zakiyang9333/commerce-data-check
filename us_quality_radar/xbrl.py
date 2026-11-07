@@ -27,11 +27,12 @@ def d(s: str) -> date:
 def period_kind(start: str, end: str) -> Optional[str]:
     """Classify a duration by length. Ranges allow 52/53-week fiscal years."""
     days = (d(end) - d(start)).days + 1
-    if 80 <= days <= 100:
+    # wide enough for 12/12/12/16-week calendars (e.g. Domino's: 84/168/252 days)
+    if 80 <= days <= 115:
         return "Q"
-    if 170 <= days <= 195:
+    if 160 <= days <= 200:
         return "H"
-    if 260 <= days <= 290:
+    if 245 <= days <= 295:
         return "9M"
     if 350 <= days <= 380:
         return "FY"

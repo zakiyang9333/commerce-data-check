@@ -169,7 +169,9 @@ def _ratio(ebit: Optional[float], cap: dict) -> Tuple[Optional[float], str]:
         return None, "N/A:" + cap.get("reason", "缺少资本")
     if cap["begin"]["ce"] <= 0 or cap["end"]["ce"] <= 0:
         return None, "N/M:资本为零或负数"
-    if cap["avg"] < C.NEAR_ZERO_CE_SHARE_OF_ASSETS * cap["avg_assets"]:
+    if (cap["avg"] < C.NEAR_ZERO_CE_SHARE_OF_ASSETS * cap["avg_assets"]
+            or cap["begin"]["ce"] < C.NEAR_ZERO_CE_SHARE_OF_ASSETS * cap["begin"]["assets"]
+            or cap["end"]["ce"] < C.NEAR_ZERO_CE_SHARE_OF_ASSETS * cap["end"]["assets"]):
         return ebit / cap["avg"], "N/M:资本基数接近零"
     return ebit / cap["avg"], "OK"
 
@@ -405,8 +407,31 @@ def _flags(co: Company, res: dict, cap: dict, t: Optional[dict], adj: dict, end:
         f.append("BIG_ACQUISITION")
     if cap.get("ok") and cap["begin"]["ce"] > 0 and cap["end"]["ce"] > C.CE_JUMP_RATIO * cap["begin"]["ce"]:
         f.append("CE_JUMP")
-    if (asof - d(end)).days > C.STALE_DAYS:
+    limit = C.STALE_DAYS_ANNUAL_ONLY if res.get("annual_only") else C.STALE_DAYS
+    # cross-check: operating income vs pre-tax + interest. Opposite signs with a
+    # large gap usually means a tagging error in the filing (e.g. a loss tagged
+    # as positive). Such companies are not ranked until checked by hand.
+    if res.get("ebit_method") == "A" and t:
+        tb = ttm(co.ebit_b, end)
+        res["ebit_ttm_check_pretax_plus_interest"] = tb["value"] if tb else None
+        if tb and t["value"] * tb["value"] < 0 and abs(t["value"] - tb["value"]) > 0.5 * abs(t["value"]):
+            f.append("EBIT_CONFLICT")
+            res["notes"].append("营业利润与（税前利润+利息）符号相反且差距大：可能是大额非经营损益，也可能是标签错误，需人工核对")
+    # operating profit larger than revenue is impossible for a normal business:
+    # treat as a tagging error and keep it out of the ranking
+    if t and t["value"] > 0 and co.s.get("revenue"):
+        tr = ttm(co.s["revenue"], end)
+        res["revenue_ttm"] = tr["value"] if tr else None
+        if tr and tr["value"] >= 0 and t["value"] > tr["value"]:
+            f.append("EBIT_GT_REVENUE")
+            res["notes"].append("TTM 营业利润大于营业收入，疑似申报标签错误，不参与排名")
+    if (asof - d(end)).days > limit:
         f.append("STALE")
+        last_assets = co.s["assets"].instants()[-1].end if co.s["assets"].instants() else None
+        if last_assets and last_assets > end and not co.inst("liab_cur", last_assets):
+            res["notes"].append(f"最新资产负债表（{last_assets}）未区分流动负债，只能显示 {end} 的旧数据，不参与排名")
+        else:
+            res["notes"].append(f"最新可计算期末 {end} 距今超过 {limit} 天，不参与排名")
     if res.get("annual_only"):
         f.append("NO_QUARTERLY_XBRL")
     if res.get("ttm_method") == "sum4Q":
@@ -416,14 +441,14 @@ def _flags(co: Company, res: dict, cap: dict, t: Optional[dict], adj: dict, end:
     # cyclical peak needs industry data: phase 2
 
 
-SEVERE = {"CE_NEGATIVE_OR_ZERO", "CE_NEAR_ZERO", "ONE_OFF_GAIN", "LARGE_ADJUSTMENT", "STALE"}
+SEVERE = {"CE_NEGATIVE_OR_ZERO", "CE_NEAR_ZERO", "ONE_OFF_GAIN", "LARGE_ADJUSTMENT", "STALE", "EBIT_CONFLICT", "EBIT_GT_REVENUE"}
 ONE_OFF_OR_BASE = {"ONE_OFF_GAIN", "LARGE_ADJUSTMENT", "CE_NEAR_ZERO", "CE_JUMP", "BIG_IMPAIRMENT", "EQUITY_NEGATIVE"}
 
 
 def _grade(res: dict) -> None:
     r = res.get("roce_ttm")
     ok = res.get("status") == "OK"
-    res["rank_eligible"] = ok and res["group"] == "general"
+    res["rank_eligible"] = ok and res["group"] == "general" and not ({"STALE", "EBIT_GT_REVENUE"} & set(res["flags"]))
     res["band"] = C.band(r) if ok else res.get("status", "N/A").split(":")[0]
     # stability grade (section 5)
     g = None

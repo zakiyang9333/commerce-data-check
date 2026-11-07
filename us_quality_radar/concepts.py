@@ -80,6 +80,7 @@ ONE_OFF_SHARE_OF_EBIT = 0.10
 ACQUISITION_SHARE_OF_CE = 0.10
 CE_JUMP_RATIO = 1.5
 STALE_DAYS = 200
+STALE_DAYS_ANNUAL_ONLY = 400   # 20-F/40-F filers report once a year
 
 
 def band(roce):

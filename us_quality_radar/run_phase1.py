@@ -69,6 +69,14 @@ ANN_COLS = ["ticker", "cik", "label", "fy_end", "ebit", "ebit_method", "ebit_adj
             "ce_avg", "roce", "roce_adj", "roce_yoy_pp", "status", "form", "filed", "accn"]
 
 
+def _slim(sub):
+    if not sub:
+        return None
+    keep = {k: sub.get(k) for k in ("sic", "sicDescription", "entityType", "stateOfIncorporation", "fiscalYearEnd")}
+    keep["filings"] = {"recent": {"form": sorted(set(sub.get("filings", {}).get("recent", {}).get("form", []) or []))}}
+    return keep
+
+
 def sha256(p):
     h = hashlib.sha256()
     with open(p, "rb") as f:
@@ -105,7 +113,7 @@ def main(argv=None):
     tex = json.load(open(os.path.join(a.raw, "company_tickers_exchange.json")))
     subs_src, facts_src = Source(a.raw, "submissions"), Source(a.raw, "companyfacts")
     ciks = sorted({int(r[0]) for r in tex["data"]})
-    subs = {c: subs_src.get(c) for c in ciks}
+    subs = {c: _slim(subs_src.get(c)) for c in ciks}  # keep memory small
     uni = U.build(tex, {c: s for c, s in subs.items() if s})
     with open(os.path.join(a.out, "universe.csv"), "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=list(uni[0].keys()))
