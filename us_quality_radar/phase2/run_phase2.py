@@ -15,11 +15,11 @@ from .names_cn import NAME_CN
 COLS = ["ticker", "name", "name_cn", "cik", "group", "radar_sector", "radar_sector_cn", "gics_sector", "gics_industry_group",
         "gics_industry", "gics_sub_industry", "radar_segment", "class_source", "class_confidence", "segment_source",
         "cyclical_class", "cyclical_label", "rank_eligible", "status", "period_end", "roce_ttm",
-        "roce_3y_avg", "roce_5y_avg", "roce_5y_median", "roce_10y_avg", "roce_10y_median", "roce_10y_years", "roce_volatility_pp", "roce_volatility_cv", "roce_max_drawdown_pp", "roce_max_drawdown_rel", "high_volatility",
+        "roce_5y_avg", "years_available", "trend_slope_pp", "roce_3y_avg_full", "roce_5y_avg_full", "roce_5y_median_full", "roce_10y_avg", "roce_10y_median", "roce_10y_years", "roce_volatility_pp", "roce_volatility_cv", "roce_max_drawdown_pp", "roce_max_drawdown_rel", "high_volatility",
         "normalized_roce", "normalized_years", "normalized_status", "normalized_roce_margin",
         "revenue_ttm", "revenue_growth", "ebit_growth", "gross_margin_ttm", "gross_margin_10y_median", "ebit_margin_ttm",
         "ebit_margin_10y_median", "inventory_growth", "capex_growth", "capex_intensity_ttm", "capex_intensity_5y_median",
-        "ocf_to_ebit_5y", "ocf_verified", "peak_signals", "peak_alert", "peak_dependence", "trend_5y_slope_pp",
+        "ocf_to_ebit_5y", "ocf_verified", "peak_signals", "peak_alert", "peak_dependence", "qclass_slope_pp",
         "quality_class", "quality_reason", "stability_grade_phase1", "years_ge_20", "flags_phase1", "notes"]
 
 
@@ -56,7 +56,7 @@ def main(argv=None):
         c = classify(r["cik"], tickers, sic, r["group"], sp)
         row = {"ticker": r["ticker"], "name": r["name"], "name_cn": NAME_CN.get(r["ticker"], ""), "cik": r["cik"],
                "group": r["group"], "rank_eligible": r["rank_eligible"], "status": r["status"], "period_end": r["period_end"],
-               "roce_ttm": r["roce_ttm"], "stability_grade_phase1": r["stability_grade"], "years_ge_20": r["years_ge_20"],
+               "roce_ttm": r["roce_ttm"], "roce_5y_avg": r["roce_5y_avg"], "years_available": r["years_available"], "trend_slope_pp": r["trend_slope_pp"], "stability_grade_phase1": r["stability_grade"], "years_ge_20": r["years_ge_20"],
                "flags_phase1": r["flags"], **c}
         m = {}
         fn = f"CIK{int(r['cik']):010d}.json"

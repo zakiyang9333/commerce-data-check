@@ -91,13 +91,23 @@ def analyse_cycle(cik, cf, cur, annual):
     ok = [h for h in hist if h["status"] == "OK" and h["roce"] is not None]
     r = [h["roce"] for h in ok]
     out["n_years_ok"] = len(r)
-    out["roce_3y_avg"] = mean(r[-3:]) if len(r) >= 3 else None
-    out["roce_5y_avg"] = mean(r[-5:]) if len(r) >= 5 else None
-    out["roce_5y_median"] = median(r[-5:]) if len(r) >= 5 else None
-    out["roce_10y_avg"] = mean(r[-10:]) if len(r) >= 8 else None
-    out["roce_10y_median"] = median(r[-10:]) if len(r) >= 8 else None
+
+    def _win(n):
+        # last n fiscal years (calendar window, N/M years are NOT skipped over)
+        return [h["roce"] for h in hist[-n:] if h["status"] == "OK" and h["roce"] is not None]
+
+    w3, w5, w10 = _win(3), _win(5), _win(10)
+    # phase-2 "strict" averages: every fiscal year in the window must be valid.
+    # Named *_full so they never collide with phase-1 roce_5y_avg (which averages
+    # however many valid years exist in the last 5, 1-5 years).
+    out["roce_3y_avg_full"] = mean(w3) if len(hist) >= 3 and len(w3) == 3 else None
+    out["roce_5y_avg_full"] = mean(w5) if len(hist) >= 5 and len(w5) == 5 else None
+    out["roce_5y_median_full"] = median(w5) if len(hist) >= 5 and len(w5) == 5 else None
+    out["roce_10y_avg"] = mean(w10) if len(w10) >= 8 else None
+    out["roce_10y_median"] = median(w10) if len(w10) >= 8 else None
+    r = w10  # volatility / drawdown use the same 10-fiscal-year window
     out["roce_volatility_pp"] = pstdev([x * 100 for x in r[-10:]]) if len(r) >= 5 else None
-    out["roce_10y_years"] = len(r[-10:])
+    out["roce_10y_years"] = len(w10)
     mu = mean(r[-10:]) if len(r) >= 5 else None
     out["roce_volatility_cv"] = (out["roce_volatility_pp"] / 100 / mu) if (mu and mu > 0) else None
     # max drawdown of annual ROCE over 10y: separates boom/bust from steady upward drift
@@ -111,7 +121,7 @@ def analyse_cycle(cik, cf, cur, annual):
     out["roce_max_drawdown_rel"] = dd_rel if len(r) >= 5 else None
 
     # ---------------- normalized ROCE (full-cycle, capital weighted)
-    cyc = [h for h in ok[-10:] if h["ce_avg"] and h["ce_avg"] > 0 and h["ebit"] is not None]
+    cyc = [h for h in hist[-10:] if h["status"] == "OK" and h["roce"] is not None and h["ce_avg"] and h["ce_avg"] > 0 and h["ebit"] is not None]
     if len(cyc) >= MIN_YEARS_NORMALIZED:
         out["normalized_roce"] = sum(h["ebit"] for h in cyc) / sum(h["ce_avg"] for h in cyc)
         out["normalized_years"] = f'{cyc[0]["label"]}–{cyc[-1]["label"]}（{len(cyc)} 年）'
@@ -120,7 +130,7 @@ def analyse_cycle(cik, cf, cur, annual):
         out["normalized_roce"], out["normalized_years"] = None, f"{len(cyc)} 年"
         out["normalized_status"] = f"数据不足（完整财年 {len(cyc)} < {MIN_YEARS_NORMALIZED}）"
     margins = [h["ebit"] / h["revenue"] for h in cyc if h["revenue"] and h["revenue"] > 0]
-    gms = [h["gross_profit"] / h["revenue"] for h in ok[-10:] if h["gross_profit"] is not None and h["revenue"] and h["revenue"] > 0]
+    gms = [h["gross_profit"] / h["revenue"] for h in hist[-10:] if h["status"] == "OK" and h["gross_profit"] is not None and h["revenue"] and h["revenue"] > 0]
 
     # ---------------- TTM operating data and year-ago comparison
     sig = {}
@@ -171,9 +181,9 @@ def analyse_cycle(cik, cf, cur, annual):
 
         # ---------------- peak signals
         c = float(cur["roce_ttm"]) if cur.get("roce_ttm") not in ("", None) else None
-        if c is not None and out["roce_5y_avg"] is not None and out["roce_5y_avg"] > 0:
-            if (c - out["roce_5y_avg"]) * 100 >= PK_VS_5Y_PP and c >= PK_VS_5Y_X * out["roce_5y_avg"]:
-                sig["S1_高于5年均值"] = f'当前 {c:.1%} vs 5 年均值 {out["roce_5y_avg"]:.1%}'
+        if c is not None and out["roce_5y_avg_full"] is not None and out["roce_5y_avg_full"] > 0:
+            if (c - out["roce_5y_avg_full"]) * 100 >= PK_VS_5Y_PP and c >= PK_VS_5Y_X * out["roce_5y_avg_full"]:
+                sig["S1_高于5年均值"] = f'当前 {c:.1%} vs 5 年均值 {out["roce_5y_avg_full"]:.1%}'
         if c is not None and out["roce_10y_median"] is not None and out["roce_10y_median"] > 0:
             if (c - out["roce_10y_median"]) * 100 >= PK_VS_10Y_PP and c >= PK_VS_10Y_X * out["roce_10y_median"]:
                 sig["S2_高于10年中位数"] = f'当前 {c:.1%} vs 10 年中位数 {out["roce_10y_median"]:.1%}'
@@ -213,7 +223,7 @@ def peak_and_quality(cur, cyc_class, m):
         m["peak_alert"] = ""
     norm = m.get("normalized_roce")
     vol = m.get("roce_volatility_pp")
-    avg5, med5 = m.get("roce_5y_avg"), m.get("roce_5y_median")
+    avg5, med5 = m.get("roce_5y_avg_full"), m.get("roce_5y_median_full")
     # peak dependence demotes quality only for cyclical industries (A/B); for weak-cyclical
     # businesses the alert is still shown, but a jump in returns there is not a commodity cycle
     peak_dep = (cyc_class in ("A", "B") and bool(m["peak_alert"])) or \
@@ -225,7 +235,7 @@ def peak_and_quality(cur, cyc_class, m):
     m["peak_dependence"] = peak_dep
     ocf_ok = m.get("ocf_to_ebit_5y") is not None and m["ocf_to_ebit_5y"] >= OCF_TO_EBIT_MIN
     m["ocf_verified"] = "通过" if ocf_ok else ("未通过" if m.get("ocf_to_ebit_5y") is not None else "N/A（现金流数据不全）")
-    hist = [h for h in m["history"] if h["status"] == "OK" and h["roce"] is not None][-5:]
+    hist = [h for h in m["history"][-5:] if h["status"] == "OK" and h["roce"] is not None]  # last 5 fiscal years
     q, why = "", ""
     if cur.get("rank_eligible") != "True":
         q, why = "不适用", "不在普通企业排名范围（金融/REIT、N/A、N/M 或过期）"
@@ -250,7 +260,7 @@ def peak_and_quality(cur, cyc_class, m):
             slope = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / sum((x - mx) ** 2 for x in xs)
             downs = sum(1 for a, b in zip(ys, ys[1:]) if b < a)
             ups = sum(1 for a, b in zip(ys, ys[1:]) if b > a)
-            m["trend_5y_slope_pp"] = slope
+            m["qclass_slope_pp"] = slope  # D/E test only; phase-1 trend_slope_pp is the general trend
             hist10 = [h["roce"] for h in m["history"] if h["status"] == "OK" and h["roce"] is not None]
             early_high = (max(hist10[:-2]) if len(hist10) > 2 else 0) >= 0.20 or (m.get("roce_10y_avg") or 0) >= 0.20
             if slope >= 2 and downs <= 1 and ys[-1] - ys[0] >= 5 and c >= 0.10:

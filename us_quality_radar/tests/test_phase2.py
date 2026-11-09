@@ -46,12 +46,21 @@ class TestCycle(unittest.TestCase):
         g["NetCashProvidedByUsedInOperatingActivities"] = {"units": {"USD": [{**f, "val": f["val"] * 0.9} for f in g["OperatingIncomeLoss"]["units"]["USD"]]}}
         cur, ann = p1_rows(cf)
         m = analyse_cycle(1, cf, cur, ann)
-        self.assertAlmostEqual(m["roce_5y_avg"], sum([200/850, 250/950, 300/1050, 350/1150, 400/1250]) / 5)
+        self.assertAlmostEqual(m["roce_5y_avg_full"], sum([200/850, 250/950, 300/1050, 350/1150, 400/1250]) / 5)
         self.assertEqual(m["normalized_status"][:4], "数据不足")  # only 5 years
         self.assertAlmostEqual(m["ocf_to_ebit_5y"], 0.9)
         peak_and_quality(cur, "C", m)
         # current 36%, 5y avg 27.6%, median 28.6%, cash flow OK, no peak -> A
         self.assertEqual(m["quality_class"], "A")
+
+    def test_full_window_does_not_skip_nm_years(self):
+        cf = testco()
+        cur, ann = p1_rows(cf)
+        ann[-3]["status"] = "N/M:测试"
+        m = analyse_cycle(1, cf, cur, ann)
+        self.assertIsNone(m["roce_5y_avg_full"])  # one of the last 5 fiscal years is N/M
+        self.assertIsNone(m["roce_3y_avg_full"])
+        self.assertNotIn("roce_5y_avg", m)  # phase-1 field is copied, never recomputed
 
     def test_normalized_needs_seven_years(self):
         cf = testco()

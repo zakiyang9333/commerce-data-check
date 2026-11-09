@@ -28,9 +28,10 @@ COLS = {
  "conf": ("分类可信度", lambda r: cell(E(r["class_confidence"]))),
  "cyc": ("周期", lambda r: cell(E(r["cyclical_class"] + " " + r["cyclical_label"]), r["cyclical_class"])),
  "cur": ("当前 ROCE", lambda r: cell("<b>%s</b>" % pct(r["roce_ttm"])[0], pct(r["roce_ttm"])[1])),
- "a3": ("3年均值", lambda r: cell(*pct(r["roce_3y_avg"]))),
- "a5": ("5年均值", lambda r: cell(*pct(r["roce_5y_avg"]))),
- "m5": ("5年中位数", lambda r: cell(*pct(r["roce_5y_median"]))),
+ "a3": ("3年均值<br><span class=s>满3年</span>", lambda r: cell(*pct(r["roce_3y_avg_full"]))),
+ "a5": ("5年均值<br><span class=s>同第一阶段，有效年数</span>", lambda r: cell(pct(r["roce_5y_avg"])[0] + (f'<span class=s>（{int(fv(r["years_available"]))}年）</span>' if fv(r["years_available"]) is not None else ""), pct(r["roce_5y_avg"])[1])),
+ "a5f": ("5年均值<br><span class=s>满5年，分类用</span>", lambda r: cell(*pct(r["roce_5y_avg_full"]))),
+ "m5": ("5年中位数<br><span class=s>满5年</span>", lambda r: cell(*pct(r["roce_5y_median_full"]))),
  "m10": ("10年中位数", lambda r: cell(*pct(r["roce_10y_median"]))),
  "nr": ("Normalized", lambda r: cell(*pct(r["normalized_roce"])) if r["normalized_status"] == "OK" else cell('<span class=s>数据不足</span>', -9e9)),
  "vol": ("波动σ", lambda r: cell(f'{fv(r["roce_volatility_pp"]):.0f}pp' if fv(r["roce_volatility_pp"]) is not None else "N/A", r["roce_volatility_pp"] or -1)),
@@ -39,7 +40,8 @@ COLS = {
  "q": ("质量类", lambda r: cell(f'<b>{E(r["quality_class"])}</b>')),
  "why": ("理由", lambda r: cell(f'<span class=s>{E(r["quality_reason"])}</span>')),
  "sig": ("高峰信号", lambda r: cell("<br>".join(f"<span class=s>{E(x)}</span>" for x in r["peak_signals"].split(" | ") if x))),
- "slope": ("5年斜率", lambda r: cell(f'{fv(r["trend_5y_slope_pp"]):+.1f}pp/年' if fv(r["trend_5y_slope_pp"]) is not None else "N/A", r["trend_5y_slope_pp"] or -99)),
+ "slope": ("趋势斜率<br><span class=s>同第一阶段</span>", lambda r: cell(f'{fv(r["trend_slope_pp"]):+.1f}pp/年' if fv(r["trend_slope_pp"]) is not None else "N/A", r["trend_slope_pp"] or -99)),
+ "qs": ("D/E 判定斜率<br><span class=s>近5财年</span>", lambda r: cell(f'{fv(r["qclass_slope_pp"]):+.1f}pp/年' if fv(r["qclass_slope_pp"]) is not None else "N/A", r["qclass_slope_pp"] or -99)),
  "pe": ("期末", lambda r: cell(r["period_end"])),
 }
 def table(rows, keys, tid, note=""):
@@ -66,12 +68,12 @@ ind_rows = "".join(f'<tr><td>{E(b["key"])}</td><td>{b["n"]}</td><td>{b["mean"]*1
                    for b in B["industry"] if b["n"] >= 5)
 BH = "<tr><th>名称</th><th>公司数</th><th>ROCE 平均</th><th>ROCE 中位数</th><th>≥30%</th><th>≥40%</th><th>连续5年≥20%</th></tr>"
 
-AB = sorted([r for r in EL if r["quality_class"] in ("A", "B")], key=lambda r: -(fv(r["roce_5y_median"]) or -9))
+AB = sorted([r for r in EL if r["quality_class"] in ("A", "B")], key=lambda r: -(fv(r["roce_5y_median_full"]) or -9))
 CC = by_roce([r for r in EL if r["quality_class"] == "C" and r["cyclical_class"] in ("A", "B")])
 CN_ = by_roce([r for r in EL if r["quality_class"] == "C" and r["cyclical_class"] not in ("A", "B")])
 PK = by_roce([r for r in EL if r["peak_alert"]])
-D = sorted([r for r in EL if r["quality_class"] == "D"], key=lambda r: -(fv(r["trend_5y_slope_pp"]) or -99))
-EE = sorted([r for r in EL if r["quality_class"] == "E"], key=lambda r: (fv(r["trend_5y_slope_pp"]) or 0))
+D = sorted([r for r in EL if r["quality_class"] == "D"], key=lambda r: -(fv(r["qclass_slope_pp"]) or -99))
+EE = sorted([r for r in EL if r["quality_class"] == "E"], key=lambda r: (fv(r["qclass_slope_pp"]) or 0))
 UN = [r for r in EL if r["gics_sector"] == "Unclassified" or r["gics_sub_industry"] == "Unclassified"]
 DI = [r for r in EL if r["quality_class"] == "数据不足"]
 NI = sum(1 for r in EL if r["normalized_status"] != "OK")
@@ -101,6 +103,7 @@ nav a{{margin-right:12px}} code{{background:#f0f0f0;padding:0 4px;border-radius:
 <nav><a href="#c1">1 分类完成率</a><a href="#c2">2 行业排行</a><a href="#c3">3 长期优秀</a><a href="#c4">4 周期性高 ROCE</a><a href="#c5">5 周期高峰警报</a><a href="#c6">6 持续改善</a><a href="#c7">7 质量恶化</a><a href="#c8">8 数据不足与无法分类</a></nav>
 <div class=tiles>{T}</div>
 
+<div class=s style="margin:8px 0;padding:8px;border-left:3px solid #c80"><b>口径说明（11-09 修订）</b>：「5年均值（同第一阶段）」与第一阶段报告完全相同，是最近 5 个财年里有效年份的平均，有效年可能只有 1–4 年，括号里是年数。「5年均值（满5年）」要求最近 5 个财年全部有效，否则 N/A，只用于质量分类和高峰信号 S1。旧版第二阶段报告把后者也叫「5年均值」，且会跳过 N/M 年份往更早取数，所以与第一阶段对不上（1,124 家），本版已改正。</div>
 <h2 id=c1>1. GICS 行业分类完成率（可排名普通企业）</h2>
 <table><tr><th>分类可信度</th><th>公司数</th><th>占比</th></tr>{cls_tbl}</table>
 <p class=s>高 = S&P 500 公开 GICS；中 = SIC 对照到子行业；中低 = 只到行业；低 = 只到板块；无 = Unclassified。不根据公司名称猜测。细分赛道（GPU、SaaS 等）为人工整理清单，标“待核实”。</p>
@@ -113,11 +116,11 @@ nav a{{margin-right:12px}} code{{background:#f0f0f0;padding:0 4px;border-radius:
 
 <h2 id=c3>3. 长期优秀企业排行榜（A 类 {q["A"]} 家，B 类 {q["B"]} 家）</h2>
 <p class=s>并列展示 5 年均值、5 年中位数和当前 ROCE，不把三者相加成综合分。默认按 5 年中位数排序（最不受单年异常影响），可点表头改按其他指标排序。</p>
-{table(AB, ["tk","nm","cn","sec","ind","seg","q","m5","a5","cur","m10","nr","dd","ocf","cyc"], "ab")}
+{table(AB, ["tk","nm","cn","sec","ind","seg","q","m5","a5f","a5","cur","m10","nr","dd","ocf","cyc"], "ab")}
 
 <h2 id=c4>4. 周期性高 ROCE 企业（C 类中属于强/中等周期行业）</h2>
 <p class=s>当前 ROCE ≥30%，但处于周期行业且有高峰依赖或暴涨暴跌历史。Normalized ROCE 是近 7–10 年 EBIT 合计 ÷ 资本合计。</p>
-{table(CC, ["tk","nm","cn","seg","ind","cur","a5","m10","nr","dd","sig","why"], "cc")}
+{table(CC, ["tk","nm","cn","seg","ind","cur","a5","a5f","m10","nr","dd","sig","why"], "cc")}
 <details><summary><b>C 类中的非周期行业公司（高回报未持续，{len(CN_)} 家）</b></summary>{table(CN_, ["tk","nm","cn","ind","cur","a5","m5","nr","dd","why"], "cn")}</details>
 <p class=s>存储芯片和硬盘公司 {len(mem)} 家：DRAM/NAND 价格数据未接入，判断只依据财报毛利率、库存与资本开支。</p>
 
@@ -127,10 +130,10 @@ nav a{{margin-right:12px}} code{{background:#f0f0f0;padding:0 4px;border-radius:
 
 <h2 id=c6>6. ROCE 持续改善企业（D 类 {q["D"]} 家）</h2>
 <p class=s>当前 10%–30%，最近 4–5 年 ROCE 斜率 ≥ +2 个百分点/年，最多一次下降。默认按斜率排序。</p>
-{table(D, ["tk","nm","cn","ind","cur","a3","a5","slope","why","cyc"], "dd")}
+{table(D, ["tk","nm","cn","ind","cur","a3","a5","a5f","qs","why","cyc"], "dd")}
 
 <h2 id=c7>7. 质量恶化企业（E 类 {q["E"]} 家）</h2>
-{table(EE, ["tk","nm","cn","ind","cur","a5","m10","slope","why","cyc"], "ee")}
+{table(EE, ["tk","nm","cn","ind","cur","a5","a5f","m10","qs","why","cyc"], "ee")}
 
 <h2 id=c8>8. 数据不足及无法分类名单</h2>
 <p>Normalized ROCE 数据不足（有效财年少于 7 年）：{NI:,} 家可排名公司，表中显示“数据不足”，没有用当前 ROCE 代替。</p>
